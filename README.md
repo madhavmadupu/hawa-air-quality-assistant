@@ -1,3 +1,5 @@
+![Hawa — Urban Air Quality Assistant](cover.png)
+
 # Hawa — Urban Air Quality Assistant
 
 **Hack2skill PromptWars Virtual — Challenge 06: Urban Air Quality Assistant**
