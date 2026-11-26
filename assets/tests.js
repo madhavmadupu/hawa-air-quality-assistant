@@ -1,9 +1,11 @@
 /**
- * Hawa — tests.js
+ * Hawa — tests.js (v3)
  * Runnable test suite for aqi-core.js. No framework needed:
  * open the page and click "Run tests", or call HawaTests.run() in the console.
  * Covers: band classification, CPCB sub-index conversion, AQI = max rule,
- * best/worst windows, and decision/verdict logic.
+ * best/worst windows, decision/verdict logic — plus v3: multi-city compare
+ * sorting, 7-day outlook aggregation & best/worst day, 24-hour history
+ * shaping, day-over-day change, and family profile save/load round-trips.
  */
 (function (global) {
   'use strict';
@@ -73,6 +75,72 @@
     ok('Poor band mask decision mentions N95', /N95/.test(core.decisionsFor(284)[5][1] + core.decisionsFor(284)[5][2]));
     ok('Good band mask decision says not needed', /Not needed/.test(core.decisionsFor(20)[5][1]));
 
+    /* ---------- v3: multi-city compare sorting ---------- */
+    var cmpInput = [{ name: 'Delhi', aqi: 412 }, { name: 'Kochi', aqi: 38 }, { name: 'Mumbai', aqi: 168 }];
+    var cmp = core.sortCompare(cmpInput);
+    eq('Compare sorts cleanest first', cmp[0].name, 'Kochi');
+    eq('Compare sorts dirtiest last', cmp[2].name, 'Delhi');
+    eq('Compare does not mutate its input', cmpInput[0].name, 'Delhi');
+    var cmpNull = core.sortCompare([{ name: 'X', aqi: null }, { name: 'Y', aqi: 90 }]);
+    eq('Compare sinks missing readings to the end', cmpNull[1].name, 'X');
+    eq('Compare of empty list is empty', core.sortCompare([]).length, 0);
+
+    /* ---------- v3: 7-day outlook aggregation ---------- */
+    var hourly = [];
+    // Day 1: two hours averaging 100 · Day 2: two hours averaging 300
+    hourly.push({ time: '2026-11-27T08:00', aqi: 80 }, { time: '2026-11-27T09:00', aqi: 120 });
+    hourly.push({ time: '2026-11-28T08:00', aqi: 280 }, { time: '2026-11-28T09:00', aqi: 320 });
+    var days = core.dailyOutlook(hourly);
+    eq('Outlook groups hours into days', days.length, 2);
+    eq('Outlook day average is the mean AQI', days[0].avg, 100);
+    eq('Outlook day max is tracked', days[1].max, 320);
+    eq('Outlook days are date-sorted', days[0].date, '2026-11-27');
+    var bwd = core.bestWorstDays(days);
+    eq('Outlook best day is the lowest average', bwd.best.date, '2026-11-27');
+    eq('Outlook worst day is the highest average', bwd.worst.date, '2026-11-28');
+    eq('Outlook of empty series is empty', core.dailyOutlook([]).length, 0);
+    eq('Best/worst day of empty outlook is null', core.bestWorstDays([]), null);
+
+    /* ---------- v3: 24-hour history shaping ---------- */
+    var longSeries = [];
+    for (var i = 0; i < 30; i++) longSeries.push({ time: 'h' + i, aqi: 100 + i });
+    var hist = core.historySeries(longSeries, 24);
+    eq('History keeps exactly the last 24 hours', hist.length, 24);
+    eq('History starts at the 7th-oldest entry', hist[0].aqi, 106);
+    eq('History bar height scales with AQI (250 → 50%)', core.historySeries([{ time: 't', aqi: 250 }], 24)[0].heightPct, 50);
+    ok('History bars never shrink below 4%', core.historySeries([{ time: 't', aqi: 1 }], 24)[0].heightPct >= 4);
+    eq('History bar colour matches the CPCB band', core.historySeries([{ time: 't', aqi: 30 }], 24)[0].color, '#22a14b');
+    eq('History of empty series is empty', core.historySeries([], 24).length, 0);
+
+    /* ---------- v3: what changed today ---------- */
+    var chg = core.dayChange(300, 250);
+    eq('Change delta is today minus yesterday', chg.delta, 50);
+    eq('Rising AQI direction is up', chg.direction, 'up');
+    ok('Rising AQI is described as worse', /worse/.test(chg.text));
+    eq('Falling AQI direction is down', core.dayChange(180, 240).direction, 'down');
+    ok('Falling AQI is described as better', /better/.test(core.dayChange(180, 240).text));
+    eq('Equal AQI direction is same', core.dayChange(200, 200).direction, 'same');
+    eq('Change with missing yesterday is null', core.dayChange(200, null), null);
+    eq('Change with missing today is null', core.dayChange(null, 200), null);
+
+    /* ---------- v3: family profile save / load ---------- */
+    var profile = { members: { kids: true, elderly: false, asthma: true, pregnant: false, pets: false, wfh: true }, purifier: 'no', home: 'hostel', travel: 'metro' };
+    var roundTrip = core.decodeProfile(core.encodeProfile(profile));
+    ok('Profile survives an encode → decode round-trip', !!roundTrip);
+    eq('Round-trip keeps members (kids)', roundTrip.members.kids, true);
+    eq('Round-trip keeps members (asthma)', roundTrip.members.asthma, true);
+    eq('Round-trip keeps purifier choice', roundTrip.purifier, 'no');
+    eq('Round-trip keeps home type', roundTrip.home, 'hostel');
+    eq('Round-trip keeps travel mode', roundTrip.travel, 'metro');
+    eq('Corrupt JSON decodes to null', core.decodeProfile('{not json'), null);
+    eq('Empty string decodes to null', core.decodeProfile(''), null);
+    var dirty = core.decodeProfile(JSON.stringify({ members: { kids: 1, hacker: true }, purifier: 'maybe', home: 'castle', travel: 'rocket' }));
+    ok('Unknown member keys are dropped', !('hacker' in dirty.members));
+    eq('Invalid purifier falls back to yes', dirty.purifier, 'yes');
+    eq('Invalid home falls back to apartment', dirty.home, 'apartment');
+    eq('Invalid travel falls back to walk', dirty.travel, 'walk');
+    eq('Encoding a non-profile gives null', core.encodeProfile(null), null);
+
     var passed = results.filter(function (r) { return r.pass; }).length;
     return { total: results.length, passed: passed, failed: results.length - passed, results: results };
   }
@@ -101,4 +169,3 @@
     process.exit(out.failed ? 1 : 0);
   }
 })(typeof window !== 'undefined' ? window : this);
-

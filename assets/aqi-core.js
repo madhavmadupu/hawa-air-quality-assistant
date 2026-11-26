@@ -1,7 +1,16 @@
 /**
- * Hawa — aqi-core.js
- * Pure logic: CPCB categories, PM sub-index conversion, verdicts & decisions.
- * No DOM access — fully unit-testable (see tests.js). Exposed as window.HawaCore.
+ * Hawa — aqi-core.js  (v3)
+ * Pure logic only: CPCB categories, PM sub-index conversion, verdicts,
+ * decisions, plus v3 helpers — multi-city compare sorting, 7-day outlook
+ * aggregation, 24-hour history shaping, day-over-day change, and family
+ * profile (de)serialisation. No DOM, no fetch, no storage access here —
+ * everything is unit-testable (see tests.js). Exposed as window.HawaCore.
+ *
+ * Architecture:
+ *   aqi-core.js → pure maths & data shaping (this file)
+ *   app.js      → DOM wiring, Open-Meteo fetch, localStorage, rendering
+ *   tests.js    → assertion suite over this file (HawaTests.run())
+ *   styles.css  → design tokens & components (light + dark themes)
  */
 (function (global) {
   'use strict';
@@ -70,6 +79,108 @@
     return { best: best, worst: worst };
   }
 
+  /* ================= v3 helpers ================= */
+
+  /**
+   * Multi-city compare: sort [{name, aqi}] cleanest → dirtiest.
+   * Entries with no reading (aqi == null) sink to the end. Input not mutated.
+   */
+  function sortCompare(cities) {
+    return (cities || []).slice().sort(function (a, b) {
+      var av = a.aqi == null ? Infinity : a.aqi;
+      var bv = b.aqi == null ? Infinity : b.aqi;
+      return av - bv;
+    });
+  }
+
+  /**
+   * 7-day outlook: group an hourly [{time, aqi}] series by calendar date
+   * (first 10 chars of the ISO time) → [{date, avg, max, min, hours}],
+   * sorted by date. avg is the day's mean CPCB AQI, rounded.
+   */
+  function dailyOutlook(hourly) {
+    var byDate = {};
+    (hourly || []).forEach(function (h) {
+      if (!h || typeof h.time !== 'string' || h.aqi == null) return;
+      var d = h.time.slice(0, 10);
+      if (!byDate[d]) byDate[d] = { date: d, sum: 0, max: -Infinity, min: Infinity, hours: 0 };
+      byDate[d].sum += h.aqi; byDate[d].hours += 1;
+      if (h.aqi > byDate[d].max) byDate[d].max = h.aqi;
+      if (h.aqi < byDate[d].min) byDate[d].min = h.aqi;
+    });
+    return Object.keys(byDate).sort().map(function (d) {
+      var g = byDate[d];
+      return { date: d, avg: Math.round(g.sum / g.hours), max: g.max, min: g.min, hours: g.hours };
+    });
+  }
+
+  /** Best / worst day of an outlook by daily average. Null when empty. */
+  function bestWorstDays(days) {
+    if (!days || !days.length) return null;
+    var best = days[0], worst = days[0];
+    days.forEach(function (d) {
+      if (d.avg < best.avg) best = d;
+      if (d.avg > worst.avg) worst = d;
+    });
+    return { best: best, worst: worst };
+  }
+
+  /**
+   * History strip data: take the last `count` entries of a time-ordered
+   * [{time, aqi}] series and add a bar height (4–100% of the 500 scale)
+   * plus the CPCB colour, ready for rendering as a bar chart.
+   */
+  function historySeries(hourly, count) {
+    var n = count || 24;
+    var rows = (hourly || []).filter(function (h) { return h && h.aqi != null; });
+    rows = rows.slice(Math.max(0, rows.length - n));
+    return rows.map(function (h) {
+      var aqi = clampAQI(h.aqi);
+      return { time: h.time, aqi: aqi, heightPct: Math.max(4, Math.round(aqi / 500 * 100)), color: categoryFor(aqi).color };
+    });
+  }
+
+  /**
+   * "What changed today": compare today's AQI with yesterday's same-hour
+   * reading. Returns null when either side is missing — never guessed.
+   */
+  function dayChange(today, yesterday) {
+    if (today == null || yesterday == null || !isFinite(today) || !isFinite(yesterday)) return null;
+    var delta = Math.round(today) - Math.round(yesterday);
+    var direction = delta > 0 ? 'up' : delta < 0 ? 'down' : 'same';
+    var text = direction === 'same'
+      ? 'Same as yesterday at this hour (' + Math.round(today) + ').'
+      : Math.abs(delta) + ' points ' + (direction === 'up' ? 'worse' : 'better') +
+        ' than yesterday at this hour (' + Math.round(yesterday) + ' → ' + Math.round(today) + ').';
+    return { delta: delta, direction: direction, text: text };
+  }
+
+  // --- Family profiles: validated (de)serialisation for localStorage ---
+  var MEMBER_KEYS = ['kids', 'elderly', 'asthma', 'pregnant', 'pets', 'wfh'];
+  var HOME_TYPES = ['apartment', 'independent', 'hostel'];
+  var TRAVEL_MODES = ['walk', 'auto', 'metro', 'none'];
+
+  /** Normalise any object into a safe profile, or null if unusable. */
+  function sanitizeProfile(p) {
+    if (!p || typeof p !== 'object') return null;
+    var members = {};
+    MEMBER_KEYS.forEach(function (k) { members[k] = !!(p.members && p.members[k]); });
+    return {
+      members: members,
+      purifier: p.purifier === 'no' ? 'no' : 'yes',
+      home: HOME_TYPES.indexOf(p.home) >= 0 ? p.home : 'apartment',
+      travel: TRAVEL_MODES.indexOf(p.travel) >= 0 ? p.travel : 'walk'
+    };
+  }
+  function encodeProfile(p) {
+    var clean = sanitizeProfile(p);
+    return clean ? JSON.stringify(clean) : null;
+  }
+  function decodeProfile(json) {
+    if (!json || typeof json !== 'string') return null;
+    try { return sanitizeProfile(JSON.parse(json)); } catch (e) { return null; }
+  }
+
   // --- Decision cards per category: [label, value, note, dotColor] ---
   var DECISIONS = [
     [['School run','Walk or cycle','Fresh air all the way','#22a14b'],['Morning walk','Go — full route','Best part of the day','#22a14b'],['Kids\' outdoor play','Unlimited','Let them run','#22a14b'],['Exercise','Outdoors, any intensity','Make the most of it','#22a14b'],['Ventilation','Open everything','Flush the home for 30+ min','#22a14b'],['Mask','Not needed','—','#22a14b']],
@@ -90,8 +201,12 @@
   global.HawaCore = {
     CATEGORIES: CATEGORIES, DECISIONS: DECISIONS, EXAMPLE_CITIES: EXAMPLE_CITIES,
     PM25_BREAKPOINTS: PM25_BREAKPOINTS, PM10_BREAKPOINTS: PM10_BREAKPOINTS,
+    MEMBER_KEYS: MEMBER_KEYS, HOME_TYPES: HOME_TYPES, TRAVEL_MODES: TRAVEL_MODES,
     clampAQI: clampAQI, categoryIndex: categoryIndex, categoryFor: categoryFor,
     pm25SubIndex: pm25SubIndex, pm10SubIndex: pm10SubIndex,
-    computeCPCBaqi: computeCPCBaqi, bestWorstWindows: bestWorstWindows, decisionsFor: decisionsFor
+    computeCPCBaqi: computeCPCBaqi, bestWorstWindows: bestWorstWindows, decisionsFor: decisionsFor,
+    sortCompare: sortCompare, dailyOutlook: dailyOutlook, bestWorstDays: bestWorstDays,
+    historySeries: historySeries, dayChange: dayChange,
+    sanitizeProfile: sanitizeProfile, encodeProfile: encodeProfile, decodeProfile: decodeProfile
   };
 })(typeof window !== 'undefined' ? window : this);
