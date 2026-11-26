@@ -334,7 +334,7 @@
         <div class="test-item"><b>CPCB sub-index conversion</b>PM2.5 &amp; PM10 breakpoints (30→50, 60→100, 90→200, 250→400…), monotonicity checks.</div>
         <div class="test-item"><b>AQI = max rule</b>Overall AQI is the max sub-index; single-pollutant and empty cases. US AQI is never used.</div>
         <div class="test-item"><b>Decision &amp; verdict logic</b>Verdict wording per band, 6 decision cards per band, N95 guidance in the Poor band, best/worst window picking.</div>
-        <div class="test-item"><b>Compare, outlook &amp; history (v3)</b>Cleanest-first compare sorting without mutating input, daily-average outlook grouping with best/worst day, 24-hour history bars scaled to the 500 scale.</div>
+        <div class="test-item"><b>Compare, outlook &amp; history (v3)</b>Cleanest-first compare sorting without mutating input, daily-average outlook grouping with best/worst day, 24-hour history bars scaled to the 500 scale. Regression: a day with no forecast data is excluded from best/worst day and carries no AQI, band or range; ranges use only hours with real readings; history shaping drops future hours.</div>
         <div class="test-item"><b>Change &amp; profiles (v3)</b>Day-over-day delta and direction (missing data → null, never guessed), profile encode/decode round-trips, and rejection of corrupt or out-of-range profile values.</div>
       </div>
       <div class="plan-actions"><button class="btn primary" id="runTests" type="button">Run tests</button></div>

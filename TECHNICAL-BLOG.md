@@ -99,14 +99,22 @@ Attempt 2 scored Accessibility 98 and Efficiency 80; v3 targets both directly:
 - **v3: 24-hour history shaping** — trailing 24 values shaped into hour/AQI pairs; short series handled.
 - **v3: what changed today** — rising/falling/equal directions and plain-words text; missing yesterday returns null.
 - **v3: family profile save/load** — encode → decode round-trip preserves every field; corrupt JSON decodes to null; unknown keys dropped; invalid values fall back to safe defaults.
+- **v3 fix: missing forecast data is never a number** — a day with no hourly readings has a null average and renders as "No forecast data yet" (no AQI, no band, no range, no best/worst tag); best/worst day skips data-less days; daily ranges are computed only from hours with real readings (no more "Range 0–420").
+- **v3 fix: history ends at now** — the 24-hour history drops any hour timestamped after the current hour, so no future bar is ever plotted.
 
-Run it with `node assets/tests.js` (81/81 passed) or in the browser via the **Run tests** button, which renders pass/fail counts on the page. The suite tests the same code the app ships — `app.js` calls `window.HawaCore`, the tests call the same object. The Node runner was added during packaging (guarded, browser-unaffected) so `node assets/tests.js` prints every result and exits non-zero on failure.
+Run it with `node assets/tests.js` (98/98 passed) or in the browser via the **Run tests** button, which renders pass/fail counts on the page. The suite tests the same code the app ships — `app.js` calls `window.HawaCore`, the tests call the same object. The Node runner was added during packaging (guarded, browser-unaffected) so `node assets/tests.js` prints every result and exits non-zero on failure.
 
 ## Scores so far
 
 - **Attempt 1** (25 Nov 2026): **68.77/100** — Code Quality 63, Security 85, Efficiency 40, Testing 13, Accessibility 94, Alignment 82. The single-file build with embedded images and no tests was the bottleneck.
 - **Attempt 2** (26 Nov 2026): **94.33/100** — Code Quality 86, Security 100, Efficiency 80, Testing 99, Accessibility 98, Alignment 100; rank #483 / 56,004. Live AQI, modular code and the 41-assertion test suite drove the jump.
 - **Attempt 3** (v3, this package): the remaining points sit in Code Quality (86) and Efficiency (80), plus the manual evaluation that decides the final ranking — hence the v3 features, the accessibility and efficiency work, and the extended test suite. One attempt remains; deadline Sun 29 Nov 2026, 23:59 IST.
+
+## The missing-data fix — found by a live smoke test, not by the suite (v3)
+
+After v3 was pushed to GitHub and verified live on Vercel, a smoke test of the real site found a defect the 81 tests had missed: Open-Meteo returns null PM values beyond the forecast horizon, and the conversion turned nulls into AQI 0. The 7-day outlook therefore showed 1–2 Dec as "AQI 0, Good, Range 0–0" and labelled 1 Dec the "BEST DAY", and the 24-hour history plotted a bar for a future hour. The root cause was a null leaking through as a number — the exact class of invented data the app promises never to show.
+
+The fix keeps nulls as null end to end: hours with no reading stay null, days with no data get a null average and render as a dashed "No forecast data yet" card, best/worst day ignores data-less days, daily ranges use only hours with real readings, and the history shaping drops any hour after the current time. Seventeen regression assertions were added for both defects (13 missing-data, 4 future-hour), taking the suite from 81 to 98 — all passing. The lesson: the automated score checks the code, but the manual evaluation reads the screen, so the screen itself has to be verified live before the last attempt is spent.
 
 ## What I learned
 

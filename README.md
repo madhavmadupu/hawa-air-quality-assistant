@@ -16,8 +16,8 @@ Public link (Vercel, live): https://hawa-air-quality-assistant.vercel.app/
 - **Live AQI, on the CPCB scale** — tap any city to fetch its live PM2.5/PM10 from the Open-Meteo Air Quality API (no API key) and convert it to the India CPCB AQI. The reading time, PM values and source are shown on screen. The US AQI number from the API is deliberately never used. If the fetch fails (offline or API unavailable), the app falls back to clearly labelled typical winter-morning examples — never fake "live" data. The last live reading is cached in the browser, so repeat visits render instantly while fresh data loads.
 - **Best / worst windows, next 24 h** — from the hourly forecast, Hawa shows the cleanest hour for walks, play and ventilation and the worst hour to stay in for.
 - **Compare cities, side by side** — pick up to 3 cities and compare their live AQI in one view, sorted cleanest to worst, so a family can see at a glance where the air is better today.
-- **7-day AQI outlook** — daily AQI for the week ahead from the Open-Meteo forecast, with the best and worst day highlighted, so weekend plans and school runs can be timed around the air.
-- **24-hour history** — the last 24 hours as a simple bar chart, so you can see whether the air is getting better or worse right now.
+- **7-day AQI outlook** — daily AQI for the week ahead from the Open-Meteo forecast, with the best and worst day highlighted, so weekend plans and school runs can be timed around the air. Days with no forecast data yet are shown as unavailable — never as a made-up number (a live smoke test caught the app showing AQI 0 for days beyond the forecast horizon; fixed 26 Nov 2026).
+- **24-hour history** — the last 24 hours as a simple bar chart, so you can see whether the air is getting better or worse right now. The chart ends at the current hour — future hours are never plotted.
 - **What changed today** — today's live AQI compared with yesterday's same-hour reading, in plain words ("better" / "worse" / "about the same").
 - **Saved family profiles** — name and save a family profile (who's home, purifier, home type, travel mode) in the browser; it survives reloads and can be reloaded, switched or deleted. The Family Plan can also be printed as a fridge poster.
 - **Interactive AQI decision engine** — set the AQI (slider/input) or pick a city; verdicts update instantly for school run, walks, kids' play, exercise, ventilation and masks, on the India CPCB scale.
@@ -58,10 +58,10 @@ Or open the public Vercel link above.
 
 ## Run the tests
 
-The AQI maths in `assets/aqi-core.js` is pure logic (no DOM, no fetch) and is covered by 81 assertions in `assets/tests.js` — band classification at every CPCB boundary, PM2.5/PM10 sub-index conversion including boundary values, the max-rule, best/worst windows, and verdict/decision logic, plus the v3 logic: multi-city compare sorting, 7-day outlook aggregation and best/worst day, 24-hour history shaping, day-over-day change, and family-profile save/load round-trips (including corrupt-input handling).
+The AQI maths in `assets/aqi-core.js` is pure logic (no DOM, no fetch) and is covered by 98 assertions in `assets/tests.js` — band classification at every CPCB boundary, PM2.5/PM10 sub-index conversion including boundary values, the max-rule, best/worst windows, and verdict/decision logic, plus the v3 logic: multi-city compare sorting, 7-day outlook aggregation and best/worst day, 24-hour history shaping, day-over-day change, and family-profile save/load round-trips (including corrupt-input handling), plus 17 missing-data regression assertions (days with no forecast data are unavailable, never 0; future hours are dropped from history).
 
 ```bash
-node assets/tests.js   # 81/81 tests passed
+node assets/tests.js   # 98/98 tests passed
 ```
 
 Or open the app in a browser and click **Run tests** — pass/fail counts appear on the page.
@@ -80,7 +80,7 @@ assets/
   app.js              DOM + Open-Meteo fetch (cached), reading time + source,
                       fallback examples, best/worst 24 h windows, compare,
                       outlook, history, saved profiles, theme, print
-  tests.js            81-assertion suite for aqi-core.js (Node + in-browser)
+  tests.js            98-assertion suite for aqi-core.js (Node + in-browser)
   hero.webp           In-app hero illustration (lazy-loaded)
 ```
 
@@ -90,4 +90,4 @@ assets/
 - Leaderboard: https://hack2skill.com/event/pwvirtual1/dashboard/leaderboard
 - Attempt 1 submitted 25 Nov 2026 ~19:09 IST — scored 68.77/100 (Code Quality 63, Security 85, Efficiency 40, Testing 13, Accessibility 94, Alignment 82).
 - Attempt 2 submitted 26 Nov 2026 ~08:25 IST — scored **94.33/100** (Code Quality 86, Security 100, Efficiency 80, Testing 99, Accessibility 98, Alignment 100); rank #483 / 56,004 at scoring.
-- This v3 package is prepared for Attempt 3 (the last attempt) — submit only on Madhav's go-ahead. Attempts are limited to 3; deadline Sun 29 Nov 2026, 23:59 IST.
+- This v3 package is prepared for Attempt 3 (the last attempt) — submit only on Madhav's go-ahead. Attempts are limited to 3; deadline Sun 29 Nov 2026, 23:59 IST. The package includes the missing-data honesty fix found in the live smoke test on 26 Nov 2026 (forecast days with no data render as unavailable, never AQI 0; history drops future hours).
