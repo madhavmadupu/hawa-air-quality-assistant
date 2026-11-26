@@ -10,9 +10,9 @@ Winter smog in Indian cities is not an abstract chart. It is a parent deciding w
 
 Hawa ("air" in Hindi/Urdu) turns a live AQI reading into a family day-plan:
 
-1. **Honest data.** The decision engine runs on the India CPCB scale; city values are labelled as typical winter examples, with links to CPCB live data. No invented readings presented as live. Next iteration: wire the Open-Meteo Air Quality API (verified live 25 Nov 2026 — Hyderabad PM2.5 6.8 µg/m³, US AQI 55, no API key) so the gauge reads live.
+1. **Honest, live data.** The decision engine runs on the India CPCB scale. Tap any city and the app fetches live PM2.5/PM10 from the Open-Meteo Air Quality API (no API key), converts it to CPCB AQI, and shows the reading time, PM values and source on screen. Before a live fetch succeeds, city values are labelled as typical winter examples, with links to CPCB live data. No invented readings presented as live.
 2. **Who is breathing matters.** A single AQI number means different things for a 7-year-old, a healthy adult, an elderly parent and someone with asthma. Hawa keeps four family profiles and tailors outdoor limits, masks and activity advice to each.
-3. **A plan, not a panic.** Best/worst windows for ventilation, exercise and errands; low-emission commute choices; indoor hacks that work (wet-mopping, cross-ventilation in clean windows, kitchen exhaust, a DIY box-fan filter) and myths called out (houseplants don't clean room air).
+3. **A plan, not a panic.** Best/worst windows for ventilation, exercise and errands — now from the next-24-hour forecast, not just a static routine; low-emission commute choices; indoor hacks that work (wet-mopping, cross-ventilation in clean windows, kitchen exhaust, a DIY box-fan filter) and myths called out (houseplants don't clean room air).
 4. **Explain, don't just assert.** Every recommendation carries its basis on screen — the current reading, the forecast peak, the AQI band — so a family can check the reasoning instead of trusting a black box.
 
 ## Prompt strategy — how GenAI built this
@@ -34,13 +34,51 @@ PromptWars is a vibe-coding challenge: the craft is in the prompts. These are th
 **Prompt 5 — The plan, exportable.**
 > "Add a Family Plan builder (who's home, purifier, home type, travel mode) that generates a personalised day plan the family can copy or download as text. Keep every line tied to the AQI verdict on screen."
 
-**What I corrected after the first build:** the first draft asserted a spare-parts-style certainty it didn't have — it stated health claims without sources. I cut every unsourced claim, tied all guidance to the EPA AQI bands, and made the fallback-data labelling explicit. I also verified the API live (Hyderabad, 25 Nov 2026: PM2.5 6.8 µg/m³, US AQI 55) rather than trusting the docs.
+**Prompt 6 — Live AQI (v2).**
+> "Wire live data. For the selected city, geocode it with the Open-Meteo Geocoding API, fetch current + hourly PM2.5 and PM10 from the Open-Meteo Air Quality API, and convert to CPCB AQI. Show the reading time, PM values and source. The US AQI number from the API must never be presented as the CPCB AQI. From the hourly forecast, show the best and worst windows in the next 24 hours. If the fetch fails, fall back to the labelled winter examples and say so plainly."
+
+**Prompt 7 — Make it testable (v2).**
+> "Split the app into modules: pure AQI logic with no DOM and no fetch, UI wiring that calls it, and a test suite. The logic file must be unit-testable in Node and in the browser, with a visible Run Tests button. No embedded base64 images — ship real asset files."
+
+**What I corrected after the first build:** the first draft asserted a spare-parts-style certainty it didn't have — it stated health claims without sources. I cut every unsourced claim, tied all guidance to the EPA AQI bands, and made the fallback-data labelling explicit. I also verified the API live (Hyderabad, 25 Nov 2026: PM2.5 6.8 µg/m³, US AQI 55; re-verified 26 Nov 2026: PM2.5 13.4 µg/m³, US AQI 51) rather than trusting the docs.
+
+## Live-AQI prompt strategy (v2)
+
+The live-data prompt was written as a contract, not a wish list, because the failure mode that matters most here is a confident wrong number:
+
+- **Two-step fetch, one source of truth.** Geocoding (`geocoding-api.open-meteo.com/v1/search`) resolves the city to lat/lon; the air-quality call (`air-quality-api.open-meteo.com/v1/air-quality?current=pm2_5,pm10&hourly=pm2_5,pm10&forecast_days=2`) returns raw concentrations only. The app never asks the API for an AQI number.
+- **Convert, don't copy.** The API also offers a US AQI field. The prompt forbids using it: the conversion is done locally in `aqi-core.js` (below), so the number on screen is always a CPCB AQI.
+- **Show the receipt.** Every live reading displays city, PM2.5, PM10, the computed CPCB AQI, the reading timestamp and the source ("Open-Meteo Air Quality API (CAMS)"). A badge flips between "● Live reading", "Fetching live…" and "Example values" so the state is never ambiguous.
+- **Honest fallback.** Any fetch failure — offline, geocode miss, empty current data — keeps the labelled winter example for that city and says plainly that the live fetch failed and the value is an example, with a pointer to CPCB's live dashboard.
+
+## CPCB conversion (v2)
+
+`assets/aqi-core.js` is pure logic — no DOM, no fetch — so it can be tested in isolation:
+
+- **Breakpoint tables.** Official CPCB brackets for PM2.5 ([0–30, 31–60, 61–90, 91–120, 121–250, 251–500] µg/m³) and PM10 ([0–50, 51–100, 101–250, 251–350, 351–430, 431–1000] µg/m³), each mapped to its index range (0–50, 51–100, 101–200, 201–300, 301–400, 401–500).
+- **Linear interpolation** inside the matching bracket: `index = (I_high − I_low) / (C_high − C_low) × (C − C_low) + I_low`, rounded and clamped to 0–500.
+- **Max-rule.** The CPCB AQI is the maximum of the pollutant sub-indices — `computeCPCBaqi(pm25, pm10) = max(pm25SubIndex, pm10SubIndex)`. A missing pollutant contributes 0, never a guess.
+- **Bands.** 0–50 Good, 51–100 Satisfactory, 101–200 Moderate, 201–300 Poor, 301–400 Very Poor, 401–500 Severe, each with its verdict, health note and six decision cards (school run, morning walk, kids' play, exercise, ventilation, mask).
+- **Best/worst windows.** `bestWorstWindows(hourly)` picks the lowest- and highest-AQI hours from the next-24-hour forecast series.
+
+## Test strategy (v2)
+
+`assets/tests.js` — 41 assertions, no framework:
+
+- **Band classification at every CPCB boundary** (0, 50, 51, 100, 101, 200, 201, 300, 301, 400, 401, 500) plus clamping above 500.
+- **Sub-index conversion at every breakpoint** for PM2.5 and PM10 (e.g. PM2.5 30 → 50, 60 → ~100, 90 → ~200, 120 → ~300, 250 → ~400), plus monotonicity checks.
+- **Max-rule** — the higher pollutant wins; single-pollutant and no-data cases.
+- **Best/worst windows** — lowest/highest hour picked correctly; empty series returns null.
+- **Verdict/decision logic** — Good invites going out, Poor says stay in, Severe says seal and stay in; every band has 6 decision cards; the Poor mask card mentions N95.
+
+Run it with `node assets/tests.js` (41/41 passed) or in the browser via the **Run tests** button, which renders pass/fail counts on the page. The suite tests the same code the app ships — `app.js` calls `window.HawaCore`, the tests call the same object.
 
 ## What I learned
 
 - Prompting is specification: the quality of the app tracked the precision of the prompt, especially the "show your working" and "never invent readings" constraints.
 - Grounding beats fluency: a GenAI assistant that cites live numbers is useful; one that sounds confident about invented numbers is dangerous, especially for health decisions.
 - Small scope wins: one city, one family, one day — done well — beats a dashboard of everything.
+- **Separation is a prompt too.** Asking for "pure logic, no DOM, no fetch" in the prompt is what made the AQI maths testable at all — the test suite exists because the architecture prompt came before the test prompt.
 
 ## Limitations
 
@@ -50,6 +88,8 @@ PromptWars is a vibe-coding challenge: the craft is in the prompts. These are th
 
 ## Links
 
-- Live demo: https://muse.ai/s/urban-air-quality-assistant-xph6xvvmaxcxexyxn/NdEN1USJdF-WLG83QmnCfibJGYYfv0ieTv-ruItE53A
+- Live demo: https://hawa-air-quality-assistant.vercel.app/
+- GitHub: https://github.com/madhavmadupu/hawa-air-quality-assistant
+- Demo video (unlisted): https://www.youtube.com/watch?v=peUFeQgSuLQ
 - Hack2skill event: https://hack2skill.com/event/pwvirtual1
 - Submissions: https://hack2skill.com/event/pwvirtual1/dashboard/submissions
