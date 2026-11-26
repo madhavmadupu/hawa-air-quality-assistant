@@ -68,15 +68,19 @@
     return Math.max(a, b);
   }
 
-  /** Best (lowest) and worst (highest) hours from [{time, aqi}] series. */
+  /**
+   * Best (lowest) and worst (highest) hours from [{time, aqi}] series.
+   * Hours with no reading (aqi == null) are ignored — a missing hour must
+   * never win "best" by looking like AQI 0. Null when no hour has data.
+   */
   function bestWorstWindows(hourly) {
-    if (!hourly || !hourly.length) return null;
-    var best = hourly[0], worst = hourly[0];
-    hourly.forEach(function (h) {
-      if (h.aqi < best.aqi) best = h;
-      if (h.aqi > worst.aqi) worst = h;
+    var best = null, worst = null;
+    (hourly || []).forEach(function (h) {
+      if (!h || h.aqi == null || !isFinite(h.aqi)) return;
+      if (!best || h.aqi < best.aqi) best = h;
+      if (!worst || h.aqi > worst.aqi) worst = h;
     });
-    return { best: best, worst: worst };
+    return best ? { best: best, worst: worst } : null;
   }
 
   /* ================= v3 helpers ================= */
@@ -97,42 +101,64 @@
    * 7-day outlook: group an hourly [{time, aqi}] series by calendar date
    * (first 10 chars of the ISO time) → [{date, avg, max, min, hours}],
    * sorted by date. avg is the day's mean CPCB AQI, rounded.
+   * Missing data is never a value: an hour with aqi == null contributes
+   * nothing (not even to the min/max range), and a date whose hours are
+   * ALL missing still appears — with avg/max/min = null and hours = 0 —
+   * so the UI can show it as unavailable instead of inventing AQI 0.
    */
   function dailyOutlook(hourly) {
     var byDate = {};
     (hourly || []).forEach(function (h) {
-      if (!h || typeof h.time !== 'string' || h.aqi == null) return;
+      if (!h || typeof h.time !== 'string' || h.time.length < 10) return;
       var d = h.time.slice(0, 10);
       if (!byDate[d]) byDate[d] = { date: d, sum: 0, max: -Infinity, min: Infinity, hours: 0 };
-      byDate[d].sum += h.aqi; byDate[d].hours += 1;
-      if (h.aqi > byDate[d].max) byDate[d].max = h.aqi;
-      if (h.aqi < byDate[d].min) byDate[d].min = h.aqi;
+      if (h.aqi == null || !isFinite(h.aqi)) return; // no reading this hour
+      var g = byDate[d];
+      g.sum += h.aqi; g.hours += 1;
+      if (h.aqi > g.max) g.max = h.aqi;
+      if (h.aqi < g.min) g.min = h.aqi;
     });
     return Object.keys(byDate).sort().map(function (d) {
       var g = byDate[d];
+      if (!g.hours) return { date: d, avg: null, max: null, min: null, hours: 0 };
       return { date: d, avg: Math.round(g.sum / g.hours), max: g.max, min: g.min, hours: g.hours };
     });
   }
 
-  /** Best / worst day of an outlook by daily average. Null when empty. */
+  /**
+   * Best / worst day of an outlook by daily average. Days with no data
+   * (avg == null) are ignored — they can never be "best" or "worst".
+   * Null when no day has data.
+   */
   function bestWorstDays(days) {
-    if (!days || !days.length) return null;
-    var best = days[0], worst = days[0];
-    days.forEach(function (d) {
-      if (d.avg < best.avg) best = d;
-      if (d.avg > worst.avg) worst = d;
+    var best = null, worst = null;
+    (days || []).forEach(function (d) {
+      if (!d || d.avg == null || !isFinite(d.avg)) return;
+      if (!best || d.avg < best.avg) best = d;
+      if (!worst || d.avg > worst.avg) worst = d;
     });
-    return { best: best, worst: worst };
+    return best ? { best: best, worst: worst } : null;
   }
 
   /**
    * History strip data: take the last `count` entries of a time-ordered
    * [{time, aqi}] series and add a bar height (4–100% of the 500 scale)
    * plus the CPCB colour, ready for rendering as a bar chart.
+   * When `nowMs` (epoch ms) is given, entries timestamped after it are
+   * dropped first — a history chart must never show future hours.
+   * Timestamps come from entry.ms when numeric, else Date.parse(entry.time);
+   * entries with no readable timestamp are kept (they cannot be proven
+   * to be in the future).
    */
-  function historySeries(hourly, count) {
+  function historySeries(hourly, count, nowMs) {
     var n = count || 24;
-    var rows = (hourly || []).filter(function (h) { return h && h.aqi != null; });
+    var rows = (hourly || []).filter(function (h) { return h && h.aqi != null && isFinite(h.aqi); });
+    if (nowMs != null && isFinite(nowMs)) {
+      rows = rows.filter(function (h) {
+        var t = typeof h.ms === 'number' ? h.ms : Date.parse(h.time);
+        return !isFinite(t) || t <= nowMs;
+      });
+    }
     rows = rows.slice(Math.max(0, rows.length - n));
     return rows.map(function (h) {
       var aqi = clampAQI(h.aqi);

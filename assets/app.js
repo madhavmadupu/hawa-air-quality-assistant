@@ -94,15 +94,21 @@
   }
   function hourlySeries(aq) {
     var times = aq.hourly.time, p25 = aq.hourly.pm2_5, p10 = aq.hourly.pm10, out = [];
-    for (var i = 0; i < times.length; i++) out.push({ time: times[i], ms: new Date(times[i]).getTime(), aqi: Core.computeCPCBaqi(p25[i], p10[i]) });
+    for (var i = 0; i < times.length; i++) {
+      // No reading for this hour (both pollutants null — e.g. beyond the
+      // forecast horizon) → aqi stays null. Missing data must never be
+      // converted into a fake AQI 0.
+      var hasReading = p25[i] != null || p10[i] != null;
+      out.push({ time: times[i], ms: new Date(times[i]).getTime(), aqi: hasReading ? Core.computeCPCBaqi(p25[i], p10[i]) : null });
+    }
     return out;
   }
 
   /* ----- Renderers for the v3 data views ----- */
   function renderHistory(series) {
     if (!historyBox) return;
-    var past = series.filter(function (h) { return h.ms <= Date.now() + 3600000; });
-    var hist = Core.historySeries(past, 24);
+    // History ends at the current hour — future hours are never charted.
+    var hist = Core.historySeries(series, 24, Date.now());
     if (!hist.length) { historyBox.innerHTML = '<div class="history-empty">History appears here after a live reading loads.</div>'; return; }
     var bars = hist.map(function (h) {
       return '<div class="h-bar" style="height:' + h.heightPct + '%;background:' + h.color + '" title="AQI ' + h.aqi + ' · ' + fmtHour(h.time) + '" role="img" aria-label="AQI ' + h.aqi + ' at ' + fmtHour(h.time) + '"></div>';
@@ -116,6 +122,7 @@
     // Yesterday's reading at (as close as possible to) the same hour.
     var target = Date.now() - 24 * 3600000, best = null, bestDiff = Infinity;
     series.forEach(function (h) {
+      if (h.aqi == null) return; // only hours with a real reading count
       var d = Math.abs(h.ms - target);
       if (d < bestDiff) { bestDiff = d; best = h; }
     });
@@ -133,13 +140,20 @@
     if (!days.length) { outlookBox.innerHTML = '<p class="outlook-note">The 7-day outlook appears here after a live reading loads for a city above.</p>'; if (outlookNote) outlookNote.textContent = ''; return; }
     var bw = Core.bestWorstDays(days);
     outlookBox.innerHTML = days.map(function (d) {
+      // No forecast data for this day: say so plainly — no AQI number,
+      // no band, no range, and never a best/worst tag.
+      if (d.avg == null) {
+        return '<div class="day-card nodata"><div class="dow">' + fmtDow(d.date) + '</div><div class="d-nodata">No forecast data yet</div><div class="d-range">' + fmtDay(d.date) + '</div></div>';
+      }
       var c = Core.categoryFor(d.avg);
       var tag = bw && days.length > 1 && d === bw.best ? '<span class="day-tag best">Best day</span>' : bw && days.length > 1 && d === bw.worst ? '<span class="day-tag worst">Worst day</span>' : '';
       var cls = bw && d === bw.best ? ' best' : bw && d === bw.worst ? ' worst' : '';
       return '<div class="day-card' + cls + '"><div class="dow">' + fmtDow(d.date) + '</div><div class="d-aqi" style="color:' + c.color + '">' + d.avg + '</div><div class="d-cat">' + c.name + '</div><div class="d-range">' + fmtDay(d.date) + '<br>Range ' + d.min + '–' + d.max + '</div>' + tag + '</div>';
     }).join('');
-    if (outlookNote && bw) {
-      outlookNote.innerHTML = 'For <b>' + currentCity + '</b>: cleanest day ahead is <b>' + fmtDay(bw.best.date) + '</b> (average AQI ' + bw.best.avg + ', ' + Core.categoryFor(bw.best.avg).name + ') — plan outdoor events then. Toughest is <b>' + fmtDay(bw.worst.date) + '</b> (average AQI ' + bw.worst.avg + ', ' + Core.categoryFor(bw.worst.avg).name + '). Daily averages from Open-Meteo hourly forecasts, converted to CPCB AQI.';
+    if (outlookNote) {
+      outlookNote.innerHTML = bw
+        ? 'For <b>' + currentCity + '</b>: cleanest day ahead is <b>' + fmtDay(bw.best.date) + '</b> (average AQI ' + bw.best.avg + ', ' + Core.categoryFor(bw.best.avg).name + ') — plan outdoor events then. Toughest is <b>' + fmtDay(bw.worst.date) + '</b> (average AQI ' + bw.worst.avg + ', ' + Core.categoryFor(bw.worst.avg).name + '). Daily averages from Open-Meteo hourly forecasts, converted to CPCB AQI.'
+        : '';
     }
   }
 

@@ -101,6 +101,35 @@
     eq('Outlook of empty series is empty', core.dailyOutlook([]).length, 0);
     eq('Best/worst day of empty outlook is null', core.bestWorstDays([]), null);
 
+    /* ---------- Regression: missing data is never a value ----------
+       Live smoke test (26 Nov 2026): days beyond the forecast horizon
+       arrived with null PM values and rendered as "AQI 0 · Good ·
+       Range 0–0", with one wrongly tagged BEST DAY; a partly-missing
+       day showed "Range 0–420". Missing hours must contribute nothing. */
+    var sparseHourly = [];
+    // Day 1: two real hours averaging 100 · Day 2: no data at all
+    // (every hour null, as Open-Meteo returns past its horizon) ·
+    // Day 3: one missing hour mixed with real hours 100 and 300.
+    sparseHourly.push({ time: '2026-11-27T08:00', aqi: 80 }, { time: '2026-11-27T09:00', aqi: 120 });
+    sparseHourly.push({ time: '2026-11-28T08:00', aqi: null }, { time: '2026-11-28T09:00', aqi: null });
+    sparseHourly.push({ time: '2026-11-29T08:00', aqi: null }, { time: '2026-11-29T09:00', aqi: 100 }, { time: '2026-11-29T10:00', aqi: 300 });
+    var sparseDays = core.dailyOutlook(sparseHourly);
+    eq('No-data day still appears in the outlook', sparseDays.length, 3);
+    eq('No-data day reports 0 hours with data', sparseDays[1].hours, 0);
+    eq('No-data day average is null — never 0', sparseDays[1].avg, null);
+    eq('No-data day min is null — no fake range', sparseDays[1].min, null);
+    eq('No-data day max is null — no fake range', sparseDays[1].max, null);
+    var sparseBw = core.bestWorstDays(sparseDays);
+    eq('Best day ignores the no-data day', sparseBw.best.date, '2026-11-27');
+    eq('Worst day is the highest real average', sparseBw.worst.date, '2026-11-29');
+    eq('Best/worst of only no-data days is null', core.bestWorstDays([sparseDays[1]]), null);
+    eq('Partly-missing day averages real hours only', sparseDays[2].avg, 200);
+    eq('Range never starts at 0 from a missing hour', sparseDays[2].min, 100);
+    eq('Partly-missing day max uses real hours only', sparseDays[2].max, 300);
+    var winNull = core.bestWorstWindows([{ time: 'a', aqi: null }, { time: 'b', aqi: 150 }, { time: 'c', aqi: 260 }]);
+    eq('Best window ignores missing hours', winNull.best.time, 'b');
+    eq('Best/worst window of all-missing hours is null', core.bestWorstWindows([{ time: 'a', aqi: null }]), null);
+
     /* ---------- v3: 24-hour history shaping ---------- */
     var longSeries = [];
     for (var i = 0; i < 30; i++) longSeries.push({ time: 'h' + i, aqi: 100 + i });
@@ -111,6 +140,23 @@
     ok('History bars never shrink below 4%', core.historySeries([{ time: 't', aqi: 1 }], 24)[0].heightPct >= 4);
     eq('History bar colour matches the CPCB band', core.historySeries([{ time: 't', aqi: 30 }], 24)[0].color, '#22a14b');
     eq('History of empty series is empty', core.historySeries([], 24).length, 0);
+
+    /* ---------- Regression: history never shows future hours ----------
+       Live smoke test (26 Nov 2026, 1:09 pm): the chart drew a bar for
+       2:00 pm. Shaping with a "now" must drop every later hour, keep
+       the current hour, and leave past-only behaviour unchanged. */
+    var baseMs = Date.UTC(2026, 10, 26, 0, 0, 0); // 26 Nov 2026, 00:00 UTC
+    var timedSeries = [];
+    for (var ti = 0; ti < 30; ti++) {
+      var tMs = baseMs + ti * 3600000;
+      timedSeries.push({ time: new Date(tMs).toISOString(), ms: tMs, aqi: 120 });
+    }
+    var nowMs = baseMs + 13 * 3600000 + 9 * 60000; // 1:09 pm on the day
+    var histNow = core.historySeries(timedSeries, 24, nowMs);
+    eq('History with now keeps hours 0–13 only', histNow.length, 14);
+    ok('History contains no future hour', histNow.every(function (h) { return Date.parse(h.time) <= nowMs; }));
+    eq('History last bar is the current hour', histNow[histNow.length - 1].time, new Date(baseMs + 13 * 3600000).toISOString());
+    eq('History without now is unchanged', core.historySeries(timedSeries, 24).length, 24);
 
     /* ---------- v3: what changed today ---------- */
     var chg = core.dayChange(300, 250);
