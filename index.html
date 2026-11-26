@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="color-scheme" content="light dark" />
-<meta name="description" content="Hawa — Urban Air Quality Assistant. Live CPCB AQI from Open-Meteo, family plans, low-emission routines and indoor air hacks for Indian families." />
+<meta name="description" content="Hawa — Urban Air Quality Assistant. Live CPCB AQI from Open-Meteo, multi-city compare, 7-day outlook, 24-hour history, saved family plans, low-emission routines and indoor air hacks for Indian families." />
 <script id="hatch-space-target">
     (() => {
       const params = new URLSearchParams(location.hash.slice(1));
@@ -28,7 +28,11 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&display=swap" rel="stylesheet">
-<!-- Modular v2: styles in assets/styles.css, pure logic in assets/aqi-core.js, UI in assets/app.js, tests in assets/tests.js. Hero: assets/hero.webp. No embedded base64. -->
+<script>
+    /* Apply the remembered theme before first paint (no flash). */
+    try { var t = localStorage.getItem('hawa-theme'); if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+  </script>
+<!-- Modular assets: styles in assets/styles.css, logic in assets/aqi-core.js + assets/app.js, tests in assets/tests.js -->
 <link rel="stylesheet" href="assets/styles.css" />
 </head>
 <body>
@@ -44,6 +48,9 @@
 
 <div class="app">
 <div class="wrap">
+  <div class="topbar">
+    <button class="theme-toggle" id="themeToggle" type="button" aria-pressed="false" aria-label="Toggle dark mode"><span class="tt-icon" aria-hidden="true">🌙</span>Dark mode</button>
+  </div>
 
   <!-- HERO -->
   <header class="hero">
@@ -55,6 +62,7 @@
         <div class="hero-actions">
           <a class="btn primary" href="#aqi-lab">Check today's AQI →</a>
           <a class="btn" href="#plan">Build my family plan</a>
+          <a class="btn" href="#compare">Compare cities</a>
         </div>
         <div class="hero-meta">
           <span class="chip"><b>India CPCB</b> AQI scale</span>
@@ -63,7 +71,7 @@
         </div>
       </div>
       <div class="hero-img">
-        <img src="assets/hero.webp" alt="Illustration of a family reading together indoors with plants and an air purifier, while a hazy smoggy city skyline is visible outside the window" loading="eager" />
+        <img src="assets/hero.webp" alt="Illustration of a family reading together indoors with plants and an air purifier, while a hazy smoggy city skyline is visible outside the window" loading="lazy" decoding="async" />
       </div>
     </div>
   </header>
@@ -75,7 +83,7 @@
       <p>Tap a city to fetch its <strong>live</strong> air quality from Open-Meteo — PM2.5 and PM10 are converted to the India CPCB AQI (never the US AQI). Or enter any AQI manually. Every recommendation below updates instantly.</p>
     </div>
     <div class="card aqi-lab">
-      <div class="gauge-wrap">
+      <div class="gauge-wrap" id="gaugeWrap" role="meter" aria-label="Current AQI 284, category Poor. Health effects increase for everyone" aria-valuemin="0" aria-valuemax="500" aria-valuenow="284">
         <div class="gauge-sub" style="font-weight:800;letter-spacing:.06em;text-transform:uppercase">Air Quality Index · CPCB</div>
         <div class="gauge-num" id="gaugeNum">284</div>
         <div class="gauge-cat" id="gaugeCat">Poor</div>
@@ -85,7 +93,7 @@
         </div>
         <div class="scale-labels"><span>0 Good</span><span>200</span><span>500 Severe</span></div>
         <label for="aqiRange" style="display:block;font-weight:700;margin-top:14px;text-align:left">Drag to your AQI</label>
-        <input type="range" id="aqiRange" min="0" max="500" value="284" step="1" />
+        <input type="range" id="aqiRange" min="0" max="500" value="284" step="1" aria-label="AQI slider, 0 to 500" />
         <div class="aqi-input-row">
           <input type="number" id="aqiInput" min="0" max="500" value="284" aria-label="AQI value" />
           <span style="color:var(--muted);font-size:14px">Enter the number shown on CPCB / your weather app</span>
@@ -104,6 +112,8 @@
           <button class="btn small" id="refreshLive" type="button" style="float:right">↻ Refresh live</button>
           <div class="live-meta" id="liveMeta">City buttons show typical winter-morning examples until live data loads. Live readings come from Open-Meteo; always confirm with <a href="https://airquality.cpcb.gov.in/AQI_India/" target="_blank" rel="noopener">CPCB's live AQI dashboard</a>.</div>
           <div class="forecast-grid" id="forecastBox"></div>
+          <div class="changed-line" id="changedLine" hidden></div>
+          <div class="history-wrap" id="historyBox"></div>
         </div>
       </div>
       <div>
@@ -113,11 +123,48 @@
     </div>
   </section>
 
+
+  <!-- COMPARE -->
+  <section class="block" id="compare">
+    <div class="sec-head">
+      <h2>2 · Compare cities, side by side</h2>
+      <p>Pick 2–3 cities — family in one place, work in another, a trip coming up — and see their <strong>live</strong> CPCB AQI ranked cleanest to dirtiest. Live rows show their reading time; if a fetch fails, that city falls back to its labelled example value.</p>
+    </div>
+    <div class="card">
+      <div class="field-label" style="margin-top:0">Cities to compare (pick 2–3)</div>
+      <div class="toggle-row" id="compareToggles" role="group" aria-label="Cities to compare">
+        <button class="toggle" data-compare="Delhi" aria-pressed="true">Delhi</button>
+        <button class="toggle" data-compare="Lucknow" aria-pressed="true">Lucknow</button>
+        <button class="toggle" data-compare="Mumbai" aria-pressed="false">Mumbai</button>
+        <button class="toggle" data-compare="Hyderabad" aria-pressed="false">Hyderabad</button>
+        <button class="toggle" data-compare="Bengaluru" aria-pressed="false">Bengaluru</button>
+        <button class="toggle" data-compare="Kochi" aria-pressed="false">Kochi</button>
+      </div>
+      <div class="plan-actions">
+        <button class="btn primary" id="compareBtn" type="button">Compare live AQI</button>
+      </div>
+      <div class="compare-grid" id="compareGrid" aria-live="polite"></div>
+      <div class="compare-status" id="compareStatus" role="status"></div>
+    </div>
+  </section>
+
+  <!-- 7-DAY OUTLOOK -->
+  <section class="block" id="outlook">
+    <div class="sec-head">
+      <h2>3 · The week ahead — 7-day AQI outlook</h2>
+      <p>Built from the Open-Meteo hourly forecast for the city selected above, converted hour by hour to CPCB AQI and averaged per day. The week's cleanest and toughest days are highlighted so you can plan sport, travel and family events around the air — not against it.</p>
+    </div>
+    <div class="card">
+      <div class="outlook-grid" id="outlookBox" aria-live="polite"><p class="outlook-note">The 7-day outlook appears here after a live reading loads for a city above.</p></div>
+      <p class="outlook-note" id="outlookNote"></p>
+    </div>
+  </section>
+
   <!-- PLAN BUILDER -->
   <section class="block" id="plan">
     <div class="sec-head">
-      <h2>2 · Your family plan</h2>
-      <p>Tell the assistant who is at home. It combines that with the AQI above and writes a plan you can actually follow today.</p>
+      <h2>4 · Your family plan</h2>
+      <p>Tell the assistant who is at home. It combines that with the AQI above and writes a plan you can actually follow today. Your choices are remembered in this browser, and you can save named profiles — one for home, one for your parents’ house — and reload them anytime.</p>
     </div>
     <div class="card builder-grid">
       <div>
@@ -141,6 +188,19 @@
           <option value="independent">Independent house</option>
           <option value="hostel">Hostel / PG / shared room</option>
         </select>
+        <div class="profile-box">
+          <div class="field-label" style="margin-top:0">Saved family profiles — this browser only</div>
+          <div class="profile-row">
+            <input type="text" id="profileName" placeholder="Profile name — e.g. Home with kids" aria-label="New profile name" maxlength="40" />
+            <button class="btn small" id="saveProfile" type="button">Save profile</button>
+          </div>
+          <div class="profile-row">
+            <select id="profileSelect" aria-label="Saved profiles" style="flex:1 1 160px;width:auto"><option value="">No saved profiles yet</option></select>
+            <button class="btn small" id="loadProfile" type="button">Load</button>
+            <button class="btn small" id="deleteProfile" type="button">Delete</button>
+          </div>
+          <div class="profile-status" id="profileStatus" role="status">Profiles never leave this device — they are stored in your browser so the plan survives reloads.</div>
+        </div>
         <div class="field-label">Main way you travel today</div>
         <select id="travelMode" aria-label="Travel mode">
           <option value="walk">Walking / cycling</option>
@@ -154,6 +214,7 @@
         <div class="plan-actions">
           <button class="btn primary" id="copyPlan" type="button">Copy plan</button>
           <button class="btn" id="downloadPlan" type="button">Download plan (.txt)</button>
+          <button class="btn" id="printPlan" type="button">Fridge poster</button>
         </div>
         <div class="toast" id="toast" role="status"></div>
       </div>
@@ -163,7 +224,7 @@
   <!-- TIMELINE -->
   <section class="block">
     <div class="sec-head">
-      <h2>3 · A low-emission day, hour by hour</h2>
+      <h2>5 · A low-emission day, hour by hour</h2>
       <p>Winter AQI is worst early morning and late evening, and usually eases mid-afternoon. Plan around it — you breathe less pollution and create less of it.</p>
     </div>
     <div class="timeline">
@@ -181,7 +242,7 @@
   <!-- INDOOR HACKS -->
   <section class="block">
     <div class="sec-head">
-      <h2>4 · Indoor air hacks, room by room</h2>
+      <h2>6 · Indoor air hacks, room by room</h2>
       <p>Most winter exposure happens indoors. These are the fixes that matter — most cost nothing.</p>
     </div>
     <div class="card">
@@ -273,9 +334,12 @@
         <div class="test-item"><b>CPCB sub-index conversion</b>PM2.5 &amp; PM10 breakpoints (30→50, 60→100, 90→200, 250→400…), monotonicity checks.</div>
         <div class="test-item"><b>AQI = max rule</b>Overall AQI is the max sub-index; single-pollutant and empty cases. US AQI is never used.</div>
         <div class="test-item"><b>Decision &amp; verdict logic</b>Verdict wording per band, 6 decision cards per band, N95 guidance in the Poor band, best/worst window picking.</div>
+        <div class="test-item"><b>Compare, outlook &amp; history (v3)</b>Cleanest-first compare sorting without mutating input, daily-average outlook grouping with best/worst day, 24-hour history bars scaled to the 500 scale.</div>
+        <div class="test-item"><b>Change &amp; profiles (v3)</b>Day-over-day delta and direction (missing data → null, never guessed), profile encode/decode round-trips, and rejection of corrupt or out-of-range profile values.</div>
       </div>
       <div class="plan-actions"><button class="btn primary" id="runTests" type="button">Run tests</button></div>
       <div id="testResults" aria-live="polite">Tests will appear here.</div>
+      <div class="arch-note"><b>How Hawa is built:</b> <code>aqi-core.js</code> holds only pure logic (CPCB conversion, compare sorting, outlook aggregation, profile validation) so it can be tested without a browser UI. <code>app.js</code> wires the DOM, fetches Open-Meteo, caches the last reading and renders. <code>styles.css</code> owns the light/dark design tokens. No framework, no build step, no tracking.</div>
       <p style="font-size:13px;color:var(--muted);margin:10px 0 0">Files: <code>index.html</code> · <code>assets/styles.css</code> · <code>assets/aqi-core.js</code> · <code>assets/app.js</code> · <code>assets/tests.js</code> — open the console and run <code>HawaTests.run()</code> anytime.</p>
     </div>
   </section>
@@ -283,11 +347,12 @@
   <footer>
     <p><strong>Urban Air Quality Assistant</strong> — built for PromptWars Challenge 06: helping families beat winter smog with low-emission routines and indoor air hacks.</p>
     <p>Live data: <a href="https://open-meteo.com/en/docs/air-quality-api" target="_blank" rel="noopener">Open-Meteo Air Quality API</a> (PM2.5/PM10 converted to CPCB AQI in <code>assets/aqi-core.js</code>) · Check live readings before you act: <a href="https://airquality.cpcb.gov.in/AQI_India/" target="_blank" rel="noopener">CPCB National AQI Dashboard</a> · <a href="https://www.who.int/health-topics/air-pollution" target="_blank" rel="noopener">WHO — Air Pollution &amp; Health</a></p>
-    <p>v2 — live AQI, modular code (HTML + CSS + JS + tests), lighter page: hero is an external <code>assets/hero.webp</code>, no embedded base64.</p>
+    <p>v3 — adds multi-city live compare, 7-day outlook, 24-hour history, what-changed-today, saved family profiles and a remembered dark mode. Still modular and light: hero is a lazy-loaded external <code>assets/hero.webp</code>, no embedded base64, no new images.</p>
   </footer>
 
 </div>
 </div>
+<div class="print-sheet" id="printSheet" aria-label="Fridge poster with today's family plan"></div>
 
 <!-- Modular scripts: core logic → tests → UI wiring -->
 <script src="assets/aqi-core.js"></script>

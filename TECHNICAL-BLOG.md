@@ -10,9 +10,9 @@ Winter smog in Indian cities is not an abstract chart. It is a parent deciding w
 
 Hawa ("air" in Hindi/Urdu) turns a live AQI reading into a family day-plan:
 
-1. **Honest, live data.** The decision engine runs on the India CPCB scale. Tap any city and the app fetches live PM2.5/PM10 from the Open-Meteo Air Quality API (no API key), converts it to CPCB AQI, and shows the reading time, PM values and source on screen. Before a live fetch succeeds, city values are labelled as typical winter examples, with links to CPCB live data. No invented readings presented as live.
-2. **Who is breathing matters.** A single AQI number means different things for a 7-year-old, a healthy adult, an elderly parent and someone with asthma. Hawa keeps four family profiles and tailors outdoor limits, masks and activity advice to each.
-3. **A plan, not a panic.** Best/worst windows for ventilation, exercise and errands — now from the next-24-hour forecast, not just a static routine; low-emission commute choices; indoor hacks that work (wet-mopping, cross-ventilation in clean windows, kitchen exhaust, a DIY box-fan filter) and myths called out (houseplants don't clean room air).
+1. **Honest, live data.** The decision engine runs on the India CPCB scale. Tap any city and the app fetches live PM2.5/PM10 from the Open-Meteo Air Quality API (no API key), converts it to CPCB AQI, and shows the reading time, PM values and source on screen. Before a live fetch succeeds, city values are labelled as typical winter examples, with links to CPCB live data. No invented readings presented as live. The last live reading is cached in the browser, so repeat visits render instantly while fresh data loads.
+2. **Who is breathing matters.** A single AQI number means different things for a 7-year-old, a healthy adult, an elderly parent and someone with asthma. Hawa keeps four family profiles and tailors outdoor limits, masks and activity advice to each. Profiles can be named, saved in the browser, reloaded and deleted — and the plan prints as a fridge poster.
+3. **A plan, not a panic.** Best/worst windows for ventilation, exercise and errands — now from the next-24-hour forecast, not just a static routine; a 7-day outlook with the best and worst day highlighted; a 24-hour history chart; a plain-words "what changed today" line; multi-city comparison; low-emission commute choices; indoor hacks that work (wet-mopping, cross-ventilation in clean windows, kitchen exhaust, a DIY box-fan filter) and myths called out (houseplants don't clean room air).
 4. **Explain, don't just assert.** Every recommendation carries its basis on screen — the current reading, the forecast peak, the AQI band — so a family can check the reasoning instead of trusting a black box.
 
 ## Prompt strategy — how GenAI built this
@@ -40,6 +40,12 @@ PromptWars is a vibe-coding challenge: the craft is in the prompts. These are th
 **Prompt 7 — Make it testable (v2).**
 > "Split the app into modules: pure AQI logic with no DOM and no fetch, UI wiring that calls it, and a test suite. The logic file must be unit-testable in Node and in the browser, with a visible Run Tests button. No embedded base64 images — ship real asset files."
 
+**Prompt 8 — More useful, not more screens (v3).**
+> "Add only features a family would use this week: compare up to 3 cities' live AQI side by side, a 7-day outlook with the best and worst day highlighted, a 24-hour history chart, a plain-words 'what changed today' line versus yesterday's same-hour reading, and saved family profiles (name, save, reload, delete) in the browser plus a printable plan. Cache the last live reading so repeat visits render instantly. Every new feature's logic must live in the pure-logic file and be covered by tests — no untested UI maths."
+
+**Prompt 9 — Polish and access (v3).**
+> "Make it feel finished: a dark-mode toggle that remembers the choice and respects the system preference, lazy-load the hero image, keep the code small and the page fast. Every control must work from the keyboard, with visible focus states and proper ARIA labels on the gauge, slider and buttons, and contrast that passes in both themes."
+
 **What I corrected after the first build:** the first draft asserted a spare-parts-style certainty it didn't have — it stated health claims without sources. I cut every unsourced claim, tied all guidance to the EPA AQI bands, and made the fallback-data labelling explicit. I also verified the API live (Hyderabad, 25 Nov 2026: PM2.5 6.8 µg/m³, US AQI 55; re-verified 26 Nov 2026: PM2.5 13.4 µg/m³, US AQI 51) rather than trusting the docs.
 
 ## Live-AQI prompt strategy (v2)
@@ -61,17 +67,46 @@ The live-data prompt was written as a contract, not a wish list, because the fai
 - **Bands.** 0–50 Good, 51–100 Satisfactory, 101–200 Moderate, 201–300 Poor, 301–400 Very Poor, 401–500 Severe, each with its verdict, health note and six decision cards (school run, morning walk, kids' play, exercise, ventilation, mask).
 - **Best/worst windows.** `bestWorstWindows(hourly)` picks the lowest- and highest-AQI hours from the next-24-hour forecast series.
 
-## Test strategy (v2)
+## v3 features — how they work
 
-`assets/tests.js` — 41 assertions, no framework:
+All new v3 logic lives in `assets/aqi-core.js` (pure, tested); `assets/app.js` only wires it to the page and the network:
+
+- **Multi-city compare.** `sortCompare(cities)` sorts any list of `{name, aqi}` cleanest-first, ignoring cities with no reading. `app.js` geocodes each selected city, fetches its live AQI (past 2 days + 7-day forecast window in one call, so the same response also feeds history and day-change), converts with `computeCPCBaqi`, and renders the sorted cards. A city that fails to fetch is shown as unavailable, never as a guessed number.
+- **7-day outlook.** `dailyOutlook(hourly)` groups the hourly PM series by day and reduces each day to its mean AQI; `bestWorstDays(days)` picks the cleanest and worst day. The outlook uses the same CPCB conversion as the live reading, so the numbers are consistent across the page.
+- **24-hour history.** `historySeries(hourly, 24)` takes the trailing 24 hourly values and shapes them into `{hour, aqi}` bars for the chart. It reads from the same hourly series as the live fetch — no second request.
+- **What changed today.** `dayChange(today, yesterday)` compares today's live AQI with yesterday's same-hour reading (the `past_days=2` fetch provides it) and returns a direction (`up` / `down` / `same`) plus a plain-words sentence. Missing yesterday data returns `null` and the line is hidden, not invented.
+- **Saved family profiles.** `sanitizeProfile` / `encodeProfile` / `decodeProfile` validate every field against a whitelist (members, purifier, home type, travel mode) — unknown keys are dropped and invalid values fall back to safe defaults, so a corrupt or hand-edited stored profile can never break the plan. Profiles live in `localStorage` under a versioned key (`hawa-profiles-v3`); the plan itself can be printed as a fridge poster.
+- **Cached live readings.** The last successful live response is cached in `localStorage` (`hawa-cache-v3`) with its timestamp. A repeat visit renders the cached reading immediately, then replaces it when the fresh fetch lands. A stale cache is labelled as cached, never as live.
+
+## Accessibility and efficiency work (v3)
+
+Attempt 2 scored Accessibility 98 and Efficiency 80; v3 targets both directly:
+
+- **Accessibility.** Every control is keyboard-operable with a visible focus ring; the AQI gauge, slider and buttons carry ARIA labels and live regions so screen readers announce the verdict when it changes; the compare, outlook and history sections use real headings and lists, not div soup; colour contrast passes in both light and dark themes (checked against the design tokens, not assumed).
+- **Efficiency.** No new images were added — the single hero illustration is lazy-loaded (`loading="lazy"`, `decoding="async"`) and the app ships no other media. Total code is ~103 KB (index.html + styles.css + three JS files); the compare/outlook/history features reuse one Open-Meteo response per city instead of firing separate requests. The cached reading keeps repeat visits instant without a network round-trip.
+
+## Test strategy (v3)
+
+`assets/tests.js` — **81 assertions**, no framework (up from 41 in v2):
 
 - **Band classification at every CPCB boundary** (0, 50, 51, 100, 101, 200, 201, 300, 301, 400, 401, 500) plus clamping above 500.
 - **Sub-index conversion at every breakpoint** for PM2.5 and PM10 (e.g. PM2.5 30 → 50, 60 → ~100, 90 → ~200, 120 → ~300, 250 → ~400), plus monotonicity checks.
 - **Max-rule** — the higher pollutant wins; single-pollutant and no-data cases.
 - **Best/worst windows** — lowest/highest hour picked correctly; empty series returns null.
 - **Verdict/decision logic** — Good invites going out, Poor says stay in, Severe says seal and stay in; every band has 6 decision cards; the Poor mask card mentions N95.
+- **v3: multi-city compare sorting** — cleanest-first ordering, missing readings ignored, ties handled.
+- **v3: 7-day outlook** — hourly series grouped into daily means; best/worst day picked correctly.
+- **v3: 24-hour history shaping** — trailing 24 values shaped into hour/AQI pairs; short series handled.
+- **v3: what changed today** — rising/falling/equal directions and plain-words text; missing yesterday returns null.
+- **v3: family profile save/load** — encode → decode round-trip preserves every field; corrupt JSON decodes to null; unknown keys dropped; invalid values fall back to safe defaults.
 
-Run it with `node assets/tests.js` (41/41 passed) or in the browser via the **Run tests** button, which renders pass/fail counts on the page. The suite tests the same code the app ships — `app.js` calls `window.HawaCore`, the tests call the same object.
+Run it with `node assets/tests.js` (81/81 passed) or in the browser via the **Run tests** button, which renders pass/fail counts on the page. The suite tests the same code the app ships — `app.js` calls `window.HawaCore`, the tests call the same object. The Node runner was added during packaging (guarded, browser-unaffected) so `node assets/tests.js` prints every result and exits non-zero on failure.
+
+## Scores so far
+
+- **Attempt 1** (25 Nov 2026): **68.77/100** — Code Quality 63, Security 85, Efficiency 40, Testing 13, Accessibility 94, Alignment 82. The single-file build with embedded images and no tests was the bottleneck.
+- **Attempt 2** (26 Nov 2026): **94.33/100** — Code Quality 86, Security 100, Efficiency 80, Testing 99, Accessibility 98, Alignment 100; rank #483 / 56,004. Live AQI, modular code and the 41-assertion test suite drove the jump.
+- **Attempt 3** (v3, this package): the remaining points sit in Code Quality (86) and Efficiency (80), plus the manual evaluation that decides the final ranking — hence the v3 features, the accessibility and efficiency work, and the extended test suite. One attempt remains; deadline Sun 29 Nov 2026, 23:59 IST.
 
 ## What I learned
 
@@ -79,6 +114,7 @@ Run it with `node assets/tests.js` (41/41 passed) or in the browser via the **Ru
 - Grounding beats fluency: a GenAI assistant that cites live numbers is useful; one that sounds confident about invented numbers is dangerous, especially for health decisions.
 - Small scope wins: one city, one family, one day — done well — beats a dashboard of everything.
 - **Separation is a prompt too.** Asking for "pure logic, no DOM, no fetch" in the prompt is what made the AQI maths testable at all — the test suite exists because the architecture prompt came before the test prompt.
+- **Score feedback is a spec.** Attempt 1's 13 in Testing and 40 in Efficiency were not opinions — they pointed at exactly what to build next: a real test suite and a modular, image-light build. Attempt 2 proved it (+25.56 points).
 
 ## Limitations
 
